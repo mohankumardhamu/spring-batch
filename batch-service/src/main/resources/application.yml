@@ -1,0 +1,54 @@
+server:
+  port: ${SERVER_PORT:8084}
+
+spring:
+  application:
+    name: batch-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/batchdb}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  batch:
+    job:
+      enabled: false              # jobs are launched on demand by PropagationController
+    jdbc:
+      initialize-schema: always   # create Spring Batch metadata tables (BATCH_*)
+
+# Downstream microservices (overridden in docker-compose with container hostnames)
+services:
+  user:
+    url: ${USER_SERVICE_URL:http://localhost:8081}
+  order:
+    url: ${ORDER_SERVICE_URL:http://localhost:8082}
+  payment:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+  http:
+    connect-timeout: 3s
+    read-timeout: 10s
+    max-attempts: 3               # retries on connection errors / 5xx
+    backoff: 500ms
+
+# What the batch creates for every user it propagates
+propagation:
+  chunk-size: ${PROPAGATION_CHUNK_SIZE:10}
+  max-identifiers-per-request: 10000
+  sample-order:
+    product-name: Sample Product
+    quantity: 1
+    unit-price: 499.00
+  payment:
+    method: UPI
+    status: COMPLETED
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
