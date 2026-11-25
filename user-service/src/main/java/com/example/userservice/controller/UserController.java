@@ -1,5 +1,6 @@
 package com.example.userservice.controller;
 
+import com.example.userservice.dto.CountResponse;
 import com.example.userservice.dto.UserRequest;
 import com.example.userservice.dto.UserResponse;
 import com.example.userservice.service.UserService;
@@ -31,6 +32,12 @@ public class UserController {
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);
+    }
+
+    /** Total number of users in userdb. */
+    @GetMapping("/count")
+    public CountResponse count() {
+        return new CountResponse("users", userService.count());
     }
 
     @GetMapping("/{id}")

@@ -1,5 +1,6 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.dto.CountResponse;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
 import com.example.orderservice.entity.Order;
@@ -10,6 +11,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @Transactional(readOnly = true)
@@ -30,6 +35,23 @@ public class OrderService {
 
     public OrderResponse getById(Long id) {
         return OrderResponse.from(findOrThrow(id));
+    }
+
+    public CountResponse count(Long userId) {
+        List<Object[]> rows = userId == null
+                ? orderRepository.countGroupByStatus()
+                : orderRepository.countGroupByStatusForUser(userId);
+        Map<String, Long> byStatus = new LinkedHashMap<>();
+        for (OrderStatus s : OrderStatus.values()) {
+            byStatus.put(s.name(), 0L);
+        }
+        long total = 0;
+        for (Object[] row : rows) {
+            long n = (Long) row[1];
+            byStatus.put(((OrderStatus) row[0]).name(), n);
+            total += n;
+        }
+        return new CountResponse("orders", userId, total, byStatus);
     }
 
     public Page<OrderResponse> getAll(Long userId, Pageable pageable) {

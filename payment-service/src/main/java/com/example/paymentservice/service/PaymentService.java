@@ -1,5 +1,6 @@
 package com.example.paymentservice.service;
 
+import com.example.paymentservice.dto.CountResponse;
 import com.example.paymentservice.dto.PaymentRequest;
 import com.example.paymentservice.dto.PaymentResponse;
 import com.example.paymentservice.entity.Payment;
@@ -11,6 +12,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -33,6 +38,30 @@ public class PaymentService {
 
     public PaymentResponse getById(Long id) {
         return PaymentResponse.from(findOrThrow(id));
+    }
+
+    public CountResponse count(Long orderId, Long userId) {
+        List<Object[]> rows;
+        if (orderId != null) {
+            rows = paymentRepository.countGroupByStatusForOrder(orderId);
+        } else if (userId != null) {
+            rows = paymentRepository.countGroupByStatusForUser(userId);
+        } else {
+            rows = paymentRepository.countGroupByStatus();
+        }
+        Map<String, Long> byStatus = new LinkedHashMap<>();
+        for (PaymentStatus s : PaymentStatus.values()) {
+            byStatus.put(s.name(), 0L);
+        }
+        long total = 0;
+        BigDecimal amount = BigDecimal.ZERO;
+        for (Object[] row : rows) {
+            long n = (Long) row[1];
+            byStatus.put(((PaymentStatus) row[0]).name(), n);
+            total += n;
+            amount = amount.add((BigDecimal) row[2]);
+        }
+        return new CountResponse("payments", orderId == null ? userId : null, orderId, total, byStatus, amount);
     }
 
     public Page<PaymentResponse> getAll(Long orderId, Long userId, Pageable pageable) {

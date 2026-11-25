@@ -9,6 +9,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface PropagationRequestRepository extends JpaRepository<PropagationRequest, Long> {
 
+    /** Rows of [RequestStatus, Long count]. */
+    @Query("select r.status, count(r) from PropagationRequest r group by r.status")
+    java.util.List<Object[]> countGroupByStatus();
+
     @Transactional
     @Modifying
     @Query("update PropagationRequest r set r.status = :status, r.jobExecutionId = :jobExecutionId, "

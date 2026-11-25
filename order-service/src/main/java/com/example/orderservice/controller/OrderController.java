@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.CountResponse;
 import com.example.orderservice.dto.OrderRequest;
 import com.example.orderservice.dto.OrderResponse;
 import com.example.orderservice.service.OrderService;
@@ -31,6 +32,12 @@ public class OrderController {
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);
+    }
+
+    /** Total orders and a count per status; optionally only for ?userId= */
+    @GetMapping("/count")
+    public CountResponse count(@RequestParam(required = false) Long userId) {
+        return orderService.count(userId);
     }
 
     @GetMapping("/{id}")

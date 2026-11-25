@@ -7,7 +7,9 @@ import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    Optional<User> findByEmailIgnoreCase(String email);
+    // Emails are stored lowercase (see UserService), so exact matches use the unique index on email.
+    // An "IgnoreCase" query would wrap the column in lower() and scan the whole table.
+    Optional<User> findByEmail(String email);
 
-    boolean existsByEmailIgnoreCase(String email);
+    boolean existsByEmail(String email);
 }

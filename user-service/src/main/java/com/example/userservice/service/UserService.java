@@ -23,10 +23,11 @@ public class UserService {
 
     @Transactional
     public UserResponse create(UserRequest request) {
-        if (userRepository.existsByEmailIgnoreCase(request.email())) {
-            throw new DuplicateResourceException("User with email " + request.email() + " already exists");
+        String email = normalize(request.email());
+        if (userRepository.existsByEmail(email)) {
+            throw new DuplicateResourceException("User with email " + email + " already exists");
         }
-        User saved = userRepository.save(new User(request.name(), request.email(), request.phone()));
+        User saved = userRepository.save(new User(request.name(), email, request.phone()));
         return UserResponse.from(saved);
     }
 
@@ -35,9 +36,13 @@ public class UserService {
     }
 
     public UserResponse getByEmail(String email) {
-        return userRepository.findByEmailIgnoreCase(email)
+        return userRepository.findByEmail(normalize(email))
                 .map(UserResponse::from)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email " + email));
+    }
+
+    public long count() {
+        return userRepository.count();
     }
 
     public Page<UserResponse> getAll(Pageable pageable) {
@@ -47,12 +52,12 @@ public class UserService {
     @Transactional
     public UserResponse update(Long id, UserRequest request) {
         User user = findOrThrow(id);
-        if (!user.getEmail().equalsIgnoreCase(request.email())
-                && userRepository.existsByEmailIgnoreCase(request.email())) {
-            throw new DuplicateResourceException("User with email " + request.email() + " already exists");
+        String email = normalize(request.email());
+        if (!user.getEmail().equals(email) && userRepository.existsByEmail(email)) {
+            throw new DuplicateResourceException("User with email " + email + " already exists");
         }
         user.setName(request.name());
-        user.setEmail(request.email());
+        user.setEmail(email);
         user.setPhone(request.phone());
         return UserResponse.from(userRepository.saveAndFlush(user));
     }
@@ -60,6 +65,11 @@ public class UserService {
     @Transactional
     public void delete(Long id) {
         userRepository.delete(findOrThrow(id));
+    }
+
+    /** Emails are case-insensitive: store and look them up in lowercase. */
+    private static String normalize(String email) {
+        return email.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private User findOrThrow(Long id) {

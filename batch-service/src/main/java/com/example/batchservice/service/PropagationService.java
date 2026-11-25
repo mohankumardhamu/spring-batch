@@ -2,6 +2,7 @@ package com.example.batchservice.service;
 
 import com.example.batchservice.batch.PropagationJobConfig;
 import com.example.batchservice.config.PropagationProperties;
+import com.example.batchservice.dto.CountResponse;
 import com.example.batchservice.dto.PropagateRequest;
 import com.example.batchservice.dto.PropagationItemResponse;
 import com.example.batchservice.dto.PropagationStatusResponse;
@@ -27,7 +28,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 
@@ -149,6 +152,27 @@ public class PropagationService {
                 ? itemRepository.findByRequestId(requestId, pageable)
                 : itemRepository.findByRequestIdAndStatus(requestId, status, pageable);
         return page.map(PropagationItemResponse::from);
+    }
+
+    public CountResponse count() {
+        Map<String, Long> requests = tally(RequestStatus.values(), requestRepository.countGroupByStatus());
+        Map<String, Long> items = tally(ItemStatus.values(), itemRepository.countGroupByStatus());
+        return new CountResponse("propagationRequests", sum(requests), requests, sum(items), items);
+    }
+
+    private static Map<String, Long> tally(Enum<?>[] all, List<Object[]> rows) {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (Enum<?> e : all) {
+            counts.put(e.name(), 0L);
+        }
+        for (Object[] row : rows) {
+            counts.put(((Enum<?>) row[0]).name(), (Long) row[1]);
+        }
+        return counts;
+    }
+
+    private static long sum(Map<String, Long> counts) {
+        return counts.values().stream().mapToLong(Long::longValue).sum();
     }
 
     public Page<PropagationRequest> getRequests(Pageable pageable) {

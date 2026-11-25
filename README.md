@@ -121,6 +121,8 @@ Import [`postman/spring-batch-microservices.postman_collection.json`](postman/sp
   request saves the new id (`userId`, `orderId`, `paymentId`, `propagationRequestId`) into a variable
   used by the following requests.
 - Every request has a test checking the expected status code.
+- Each folder has *Count* requests (`GET .../count`). They sit before the delete request, so the
+  data you just created is still there to count.
 
 ## API reference
 
@@ -142,13 +144,16 @@ List endpoints are paginated: `?page=0&size=20&sort=id,desc`, and return
 | GET | `/api/users/{id}` | Get by id | 200 |
 | GET | `/api/users/by-email?email=` | Get by email (case-insensitive) | 200 |
 | GET | `/api/users` | List (paged) | 200 |
+| GET | `/api/users/count` | Total number of users → `{"resource":"users","total":2001}` | 200 |
 | PUT | `/api/users/{id}` | Update | 200 |
 | DELETE | `/api/users/{id}` | Delete | 204 |
 
 ```json
 { "name": "Mohan Kumar", "email": "mohan@example.com", "phone": "+91 9876543210" }
 ```
-`name` and `email` are required; `email` must be unique (409 on duplicates); `phone` is optional.
+`name` and `email` are required; `phone` is optional. Emails are case-insensitive: they are
+stored in lowercase and must be unique (409 on duplicates). Storing them lowercase lets the by-email
+lookup use the unique index, which matters at millions of rows: about 5 ms instead of a full table scan.
 
 ### User generator (virtual threads) — `http://localhost:8081`
 
@@ -161,15 +166,36 @@ List endpoints are paginated: `?page=0&size=20&sort=id,desc`, and return
 ```
 Response:
 ```json
-{ "requested": 1000, "created": 1000, "failed": 0, "durationMs": 210,
-  "threadModel": "virtual-thread-per-task", "sampleErrors": [] }
+{ "requested": 7882999, "created": 7882999, "failed": 0, "durationMs": 22421, "rowsPerSecond": 351589,
+  "chunks": 789, "chunkSize": 10000, "concurrency": 26,
+  "threadModel": "virtual-thread-per-chunk", "sampleErrors": [] }
 ```
 
-Each user is inserted in its own virtual thread (`Executors.newVirtualThreadPerTaskExecutor()`).
-`count` is 1–100,000. Emails look like `load.<random tag>.<n>@example.com`, so repeated calls never
-collide. Virtual threads are cheap, so the real limit on parallel inserts is the JDBC connection pool
-(`DB_POOL_SIZE`, 30 by default for user-service). Threads waiting for a connection park without
-holding an OS thread.
+`count` can be 1 to 10,000,000 per call. Emails look like `<emailPrefix>.<random tag>.<n>@example.com`, so
+repeated calls never collide.
+
+How it scales to millions:
+
+- The users are split into **chunks of 10,000**. Each chunk runs on its **own virtual thread**
+  (`Executors.newVirtualThreadPerTaskExecutor()`) and is inserted in **one transaction with JDBC batch
+  inserts**. `reWriteBatchedInserts=true` makes the PostgreSQL driver turn each batch into a multi-row
+  `INSERT`. Saving JPA entities one by one can't be batched with IDENTITY ids, and was about 25 times slower.
+- A **semaphore sized to the connection pool** (pool size − 4, leaving connections for normal API
+  traffic) limits how many chunks run at once. A chunk only builds its rows once it has a slot, so
+  memory stays flat even for 10 million users.
+- Measured on a 12-core machine: **10 million users ≈ 30 s** (about 350k rows/s). That's 2.2 GB in
+  Postgres, including the indexes.
+
+**Fill the database with 10 million users:**
+
+```bash
+curl -X POST localhost:8081/api/users/generate -H 'Content-Type: application/json' \
+     -d '{"count":10000000,"emailPrefix":"bulk"}'
+curl localhost:8081/api/users/count      # {"resource":"users","total":10000000}
+```
+
+The request is synchronous and returns when every user is inserted. Postman waits for it with no
+timeout by default. Progress is logged every 5% (`docker compose logs -f user-service`).
 
 ### Order service — `http://localhost:8082`
 
@@ -178,6 +204,7 @@ holding an OS thread.
 | POST | `/api/orders` | Create an order | 201 |
 | GET | `/api/orders/{id}` | Get by id | 200 |
 | GET | `/api/orders?userId=` | List (paged), optional filter by user | 200 |
+| GET | `/api/orders/count?userId=` | Total orders plus a count per status, optionally for one user | 200 |
 | PUT | `/api/orders/{id}` | Update | 200 |
 | DELETE | `/api/orders/{id}` | Delete | 204 |
 
@@ -194,6 +221,7 @@ holding an OS thread.
 | POST | `/api/payments` | Create a payment | 201 |
 | GET | `/api/payments/{id}` | Get by id | 200 |
 | GET | `/api/payments?orderId=&userId=` | List (paged), optional filter by order or user | 200 |
+| GET | `/api/payments/count?orderId=&userId=` | Total payments, count per status and summed `totalAmount`, optionally for one order or user | 200 |
 | PUT | `/api/payments/{id}` | Update | 200 |
 | DELETE | `/api/payments/{id}` | Delete | 204 |
 
@@ -204,6 +232,17 @@ holding an OS thread.
 `status` is optional: `PENDING` (default), `COMPLETED`, `FAILED`, `REFUNDED`.
 A unique `transactionRef` (e.g. `TXN-5C161B7C6F814086A9B5`) is generated on create.
 
+Example count responses (statuses with no rows are listed as 0):
+```json
+GET /api/orders/count?userId=2
+{ "resource": "orders", "userId": 2, "total": 2,
+  "byStatus": { "CREATED": 2, "CONFIRMED": 0, "PAID": 0, "SHIPPED": 0, "DELIVERED": 0, "CANCELLED": 0 } }
+
+GET /api/payments/count
+{ "resource": "payments", "userId": null, "orderId": null, "total": 11,
+  "byStatus": { "PENDING": 0, "COMPLETED": 11, "FAILED": 0, "REFUNDED": 0 }, "totalAmount": 5489.00 }
+```
+
 ### Propagation (Spring Batch) — `http://localhost:8084`
 
 | Method | Path | Description | Success |
@@ -213,6 +252,16 @@ A unique `transactionRef` (e.g. `TXN-5C161B7C6F814086A9B5`) is generated on crea
 | GET | `/api/propagate/{requestId}/items?status=` | Result for each user, optional filter `SUCCESS`/`FAILED`/`PENDING` | 200 |
 | POST | `/api/propagate/{requestId}/retry` | Run the failed items again | 202 / 409 |
 | GET | `/api/propagate` | List requests, newest first | 200 |
+| GET | `/api/propagate/count` | Requests per status, and user items per status (`SUCCESS`/`FAILED`/`PENDING`) | 200 |
+
+**Counts** across all propagation requests:
+
+```json
+GET /api/propagate/count
+{ "resource": "propagationRequests", "total": 5,
+  "byStatus": { "SUBMITTED": 0, "RUNNING": 0, "COMPLETED": 3, "COMPLETED_WITH_ERRORS": 2, "FAILED": 0 },
+  "itemTotal": 14, "itemsByStatus": { "PENDING": 0, "SUCCESS": 11, "FAILED": 3 } }
+```
 
 **1. Submit** user ids and/or emails (at least one, up to 10,000; duplicates are removed):
 
@@ -316,4 +365,9 @@ This is a demo setup. Before production you'd want to change the following:
 - **Single batch-service instance:** orphan recovery assumes one batch-service instance. With several
   instances, a node could mark another node's running job as failed.
 - **No authentication or authorization** on any endpoint.
+- **Large tables and paging:** at 10 million users, `GET /api/users/count` and each page of
+  `GET /api/users` take about 0.25 s, because Spring Data counts the whole table to report
+  `totalElements`. Deep pages are slower still (page 400,000 ≈ 1.8 s), because the database has to
+  skip every row before that page. Fetching by id or by email stays at about 5–10 ms. To page through
+  everything, use keyset pagination (`WHERE id > :lastId`).
 - **User deletion doesn't cascade** to orders or payments, because they live in other services.

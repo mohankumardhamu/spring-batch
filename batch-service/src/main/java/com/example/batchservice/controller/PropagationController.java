@@ -1,5 +1,6 @@
 package com.example.batchservice.controller;
 
+import com.example.batchservice.dto.CountResponse;
 import com.example.batchservice.dto.PropagateRequest;
 import com.example.batchservice.dto.PropagateSubmitResponse;
 import com.example.batchservice.dto.PropagationItemResponse;
@@ -55,6 +56,12 @@ public class PropagationController {
         PropagationService.Submission submission = propagationService.retry(requestId);
         return accepted(submission, ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/api/propagate/{id}").buildAndExpand(requestId).toUri());
+    }
+
+    /** Number of propagation requests and user items, per status. */
+    @GetMapping("/count")
+    public CountResponse count() {
+        return propagationService.count();
     }
 
     @GetMapping("/{requestId}")

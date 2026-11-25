@@ -1,5 +1,6 @@
 package com.example.paymentservice.controller;
 
+import com.example.paymentservice.dto.CountResponse;
 import com.example.paymentservice.dto.PaymentRequest;
 import com.example.paymentservice.dto.PaymentResponse;
 import com.example.paymentservice.service.PaymentService;
@@ -31,6 +32,13 @@ public class PaymentController {
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}").buildAndExpand(created.id()).toUri();
         return ResponseEntity.created(location).body(created);
+    }
+
+    /** Total payments, count per status and summed amount; optionally only for ?orderId= or ?userId= */
+    @GetMapping("/count")
+    public CountResponse count(@RequestParam(required = false) Long orderId,
+                               @RequestParam(required = false) Long userId) {
+        return paymentService.count(orderId, userId);
     }
 
     @GetMapping("/{id}")

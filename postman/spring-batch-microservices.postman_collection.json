@@ -2,7 +2,7 @@
   "info": {
     "name": "Spring Batch Microservices",
     "_postman_id": "5b8f8c63-2f7e-4f5e-9d1a-6a1d0f6b3c21",
-    "description": "User, Order, Payment CRUD services, virtual-thread user generator and Spring Batch propagation. Start the stack with `docker compose up -d --build`, then run folders top to bottom (each Create request saves its id into a collection variable used by later requests).",
+    "description": "User, Order, Payment CRUD services, virtual-thread user generator and Spring Batch propagation. Each service also has a GET .../count endpoint. Start the stack with `docker compose up -d --build`, then run folders top to bottom (each Create request saves its id into a collection variable used by later requests).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -243,6 +243,36 @@
               }
             }
           ]
+        },
+        {
+          "name": "Count users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userServiceUrl}}/api/users/count",
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "count"
+              ]
+            },
+            "description": "Total number of users in userdb."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -425,6 +455,72 @@
                 }
               }
             }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Count orders (by status)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderServiceUrl}}/api/orders/count",
+              "host": [
+                "{{orderServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "count"
+              ]
+            },
+            "description": "Total orders plus a count per status (CREATED, CONFIRMED, PAID, SHIPPED, DELIVERED, CANCELLED). Statuses with no orders are 0."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Count orders for user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{orderServiceUrl}}/api/orders/count?userId={{userId}}",
+              "host": [
+                "{{orderServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "orders",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}"
+                }
+              ]
+            },
+            "description": "Same as Count orders, but only for ?userId=."
           },
           "event": [
             {
@@ -695,6 +791,108 @@
           ]
         },
         {
+          "name": "Count payments (by status + total amount)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/payments/count",
+              "host": [
+                "{{paymentServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "count"
+              ]
+            },
+            "description": "Total payments, a count per status (PENDING, COMPLETED, FAILED, REFUNDED) and the summed totalAmount."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Count payments for user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/payments/count?userId={{userId}}",
+              "host": [
+                "{{paymentServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}"
+                }
+              ]
+            },
+            "description": "Same as Count payments, but only for ?userId=."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Count payments for order",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentServiceUrl}}/api/payments/count?orderId={{orderId}}",
+              "host": [
+                "{{paymentServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "count"
+              ],
+              "query": [
+                {
+                  "key": "orderId",
+                  "value": "{{orderId}}"
+                }
+              ]
+            },
+            "description": "Same as Count payments, but only for ?orderId= (takes precedence over userId)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Delete payment",
           "request": {
             "method": "DELETE",
@@ -758,7 +956,7 @@
                 }
               }
             },
-            "description": "Creates `count` (1..100000) random users concurrently, one virtual thread per user. Emails are <emailPrefix>.<random-batch-tag>.<n>@example.com, so repeated calls never collide."
+            "description": "Creates `count` (1..10,000,000) random users. They are split into chunks of 10,000; each chunk runs on its own virtual thread and is inserted in one transaction with JDBC batch inserts. Emails are <emailPrefix>.<random-tag>.<n>@example.com, so repeated calls never collide."
           },
           "event": [
             {
@@ -770,6 +968,53 @@
                   "const r = pm.response.json();",
                   "pm.test('All users created', () => pm.expect(r.created).to.eql(r.requested));",
                   "console.log(`Created ${r.created} users in ${r.durationMs} ms`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Generate 10 million users (virtual threads)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{userServiceUrl}}/api/users/generate",
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"count\": 10000000,\n  \"emailPrefix\": \"bulk\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Bulk-loads 10 million users (about 30 s, about 2.2 GB in Postgres). Not run by the Collection Runner flow by default; send it manually. Postman waits with no timeout by default."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.test('All users created', () => pm.expect(r.created).to.eql(r.requested));",
+                  "console.log(`Created ${r.created} users in ${r.durationMs} ms (${r.rowsPerSecond} rows/s)`);"
                 ]
               }
             }
@@ -1036,6 +1281,36 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Count propagation requests and items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{batchServiceUrl}}/api/propagate/count",
+              "host": [
+                "{{batchServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "propagate",
+                "count"
+              ]
+            },
+            "description": "Propagation requests per status, plus user items across all requests per status (SUCCESS / FAILED / PENDING)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
                 ]
               }
             }
