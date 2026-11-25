@@ -245,6 +245,48 @@
           ]
         },
         {
+          "name": "List user ids (keyset pagination)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{userServiceUrl}}/api/users/ids?afterId=0&limit=1000",
+              "host": [
+                "{{userServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "ids"
+              ],
+              "query": [
+                {
+                  "key": "afterId",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "1000"
+                }
+              ]
+            },
+            "description": "Ids and emails of the next `limit` (1..10000) users with id > afterId, ordered by id. To get the next page, pass the last id as afterId (saved to {{lastUserId}}). Fast at any depth, unlike page-number paging."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json();",
+                  "if (ids.length) pm.collectionVariables.set('lastUserId', ids[ids.length - 1].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Count users",
           "request": {
             "method": "GET",
@@ -1207,6 +1249,166 @@
           ]
         },
         {
+          "name": "Bulk propagate next N users (start batch job)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{batchServiceUrl}}/api/propagate/bulk",
+              "host": [
+                "{{batchServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "propagate",
+                "bulk"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"count\": 1000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Selects the next `count` (1..10,000,000) users that haven't been propagated yet from user-service and creates a sample order and a matching payment for each. Async: poll 'Get bulk propagation status'. Calling it again continues with the following users; no user is propagated twice."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('bulkRequestId', pm.response.json().requestId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get bulk propagation status (poll)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{batchServiceUrl}}/api/propagate/{{bulkRequestId}}",
+              "host": [
+                "{{batchServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "propagate",
+                "{{bulkRequestId}}"
+              ]
+            },
+            "description": "totalItems is 0 until the selection step has run. Poll until status is COMPLETED, COMPLETED_WITH_ERRORS or FAILED."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "console.log(`${r.status}: ${r.succeeded}/${r.totalItems} (requested ${r.requestedCount}), ${r.usersPerSecond} users/s`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get bulk propagation items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{batchServiceUrl}}/api/propagate/{{bulkRequestId}}/items?page=0&size=50",
+              "host": [
+                "{{batchServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "propagate",
+                "{{bulkRequestId}}",
+                "items"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "50"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bulk propagate - invalid count (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{batchServiceUrl}}/api/propagate/bulk",
+              "host": [
+                "{{batchServiceUrl}}"
+              ],
+              "path": [
+                "api",
+                "propagate",
+                "bulk"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"count\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List propagation requests",
           "request": {
             "method": "GET",
@@ -1394,6 +1596,14 @@
     {
       "key": "propagationRequestId",
       "value": "1"
+    },
+    {
+      "key": "bulkRequestId",
+      "value": "1"
+    },
+    {
+      "key": "lastUserId",
+      "value": "0"
     }
   ]
 }

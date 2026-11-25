@@ -1,6 +1,7 @@
 package com.example.userservice.controller;
 
 import com.example.userservice.dto.CountResponse;
+import com.example.userservice.dto.UserKey;
 import com.example.userservice.dto.UserRequest;
 import com.example.userservice.dto.UserResponse;
 import com.example.userservice.service.UserService;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/users")
@@ -38,6 +40,22 @@ public class UserController {
     @GetMapping("/count")
     public CountResponse count() {
         return new CountResponse("users", userService.count());
+    }
+
+    /**
+     * Ids and emails of the next {@code limit} users with id > {@code afterId}, ordered by id.
+     * Keyset pagination: pass the last id you received as the next afterId. Stays fast at any depth,
+     * unlike page-number paging. Used by batch-service's bulk propagation.
+     */
+    @GetMapping("/ids")
+    public ResponseEntity<?> ids(@RequestParam(defaultValue = "0") long afterId,
+                                 @RequestParam(defaultValue = "1000") int limit) {
+        if (limit < 1 || limit > 10_000) {
+            return ResponseEntity.badRequest().body(org.springframework.http.ProblemDetail.forStatusAndDetail(
+                    HttpStatus.BAD_REQUEST, "limit must be between 1 and 10000"));
+        }
+        List<UserKey> keys = userService.getKeysAfter(afterId, limit);
+        return ResponseEntity.ok(keys);
     }
 
     @GetMapping("/{id}")

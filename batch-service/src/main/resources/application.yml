@@ -11,6 +11,8 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/batchdb}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:40}   # >= propagation.concurrency (each running chunk holds a connection)
   jpa:
     hibernate:
       ddl-auto: update
@@ -38,7 +40,11 @@ services:
 # What the batch creates for every user it propagates
 propagation:
   chunk-size: ${PROPAGATION_CHUNK_SIZE:10}
+  concurrency: ${PROPAGATION_CONCURRENCY:32}   # chunks processed in parallel (virtual threads)
   max-identifiers-per-request: 10000
+  bulk:
+    max-count: 10000000          # max users per POST /api/propagate/bulk
+    selection-page-size: 10000   # user ids fetched per call to user-service while selecting
   sample-order:
     product-name: Sample Product
     quantity: 1

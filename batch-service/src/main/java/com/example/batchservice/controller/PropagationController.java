@@ -1,5 +1,6 @@
 package com.example.batchservice.controller;
 
+import com.example.batchservice.dto.BulkPropagateRequest;
 import com.example.batchservice.dto.CountResponse;
 import com.example.batchservice.dto.PropagateRequest;
 import com.example.batchservice.dto.PropagateSubmitResponse;
@@ -41,13 +42,24 @@ public class PropagationController {
         return accepted(submission, statusUri);
     }
 
+    /**
+     * Selects the next {@code count} users that have not been propagated yet (from user-service) and
+     * propagates them: order + payment for each. Async: returns 202 with a requestId to poll.
+     */
+    @PostMapping("/bulk")
+    public ResponseEntity<PropagateSubmitResponse> submitBulk(@RequestBody BulkPropagateRequest request) {
+        PropagationService.Submission submission = propagationService.submitBulk(request);
+        return accepted(submission, ServletUriComponentsBuilder.fromCurrentContextPath()
+                .path("/api/propagate/{id}").buildAndExpand(submission.request().getId()).toUri());
+    }
+
     private static ResponseEntity<PropagateSubmitResponse> accepted(PropagationService.Submission submission,
                                                                     URI statusUri) {
         PropagationRequest r = submission.request();
         return ResponseEntity.accepted()
                 .location(statusUri)
-                .body(new PropagateSubmitResponse(r.getId(), submission.jobExecutionId(), r.getStatus(), r.getTotalItems(),
-                        statusUri.toString(), statusUri + "/items"));
+                .body(new PropagateSubmitResponse(r.getId(), r.getType(), submission.jobExecutionId(), r.getStatus(),
+                        r.getTotalItems(), r.getRequestedCount(), statusUri.toString(), statusUri + "/items"));
     }
 
     /** Re-run the FAILED/PENDING items of a finished request (status FAILED or COMPLETED_WITH_ERRORS). */

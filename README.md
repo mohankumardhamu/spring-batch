@@ -108,9 +108,10 @@ Every setting has a `localhost` default, so no configuration is needed. Environm
 |---|---|---|
 | `SERVER_PORT` | all | 8081 / 8082 / 8083 / 8084 |
 | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | all | `jdbc:postgresql://localhost:5432/<service db>`, `postgres`, `postgres` |
-| `DB_POOL_SIZE` | user, order, payment | 30 (user), 10 (others) |
+| `DB_POOL_SIZE` | all | user 30, order 20, payment 20, batch 40 in docker-compose (app defaults: 30 / 10 / 10 / 40) |
 | `USER_SERVICE_URL`, `ORDER_SERVICE_URL`, `PAYMENT_SERVICE_URL` | batch | `http://localhost:8081` / `8082` / `8083` |
-| `PROPAGATION_CHUNK_SIZE` | batch | 10 |
+| `PROPAGATION_CHUNK_SIZE` | batch | 100 in docker-compose (app default 10) |
+| `PROPAGATION_CONCURRENCY` | batch | 32: chunks processed in parallel |
 
 ## Postman collection
 
@@ -144,6 +145,7 @@ List endpoints are paginated: `?page=0&size=20&sort=id,desc`, and return
 | GET | `/api/users/{id}` | Get by id | 200 |
 | GET | `/api/users/by-email?email=` | Get by email (case-insensitive) | 200 |
 | GET | `/api/users` | List (paged) | 200 |
+| GET | `/api/users/ids?afterId=0&limit=1000` | Ids and emails of the next `limit` (≤ 10,000) users after `afterId`, ordered by id. Keyset pagination, fast at any depth | 200 |
 | GET | `/api/users/count` | Total number of users → `{"resource":"users","total":2001}` | 200 |
 | PUT | `/api/users/{id}` | Update | 200 |
 | DELETE | `/api/users/{id}` | Delete | 204 |
@@ -247,7 +249,8 @@ GET /api/payments/count
 
 | Method | Path | Description | Success |
 |---|---|---|---|
-| POST | `/api/propagate` | Start a propagation job (async) | 202 |
+| POST | `/api/propagate` | Start a propagation job for the given user ids/emails (async) | 202 |
+| POST | `/api/propagate/bulk` | Propagate the **next N users that haven't been propagated yet** (async), see [Bulk propagation](#bulk-propagation) | 202 |
 | GET | `/api/propagate/{requestId}` | Status and counts (poll this) | 200 |
 | GET | `/api/propagate/{requestId}/items?status=` | Result for each user, optional filter `SUCCESS`/`FAILED`/`PENDING` | 200 |
 | POST | `/api/propagate/{requestId}/retry` | Run the failed items again | 202 / 409 |
@@ -270,17 +273,18 @@ curl -X POST localhost:8084/api/propagate -H 'Content-Type: application/json' \
      -d '{"userIds":[1,2,3],"emails":["mohan@example.com"]}'
 ```
 ```json
-{ "requestId": 1, "jobExecutionId": 1, "status": "SUBMITTED", "totalItems": 4,
-  "statusUrl": "http://localhost:8084/api/propagate/1",
+{ "requestId": 1, "type": "MANUAL", "jobExecutionId": 1, "status": "SUBMITTED", "totalItems": 4,
+  "requestedCount": null, "statusUrl": "http://localhost:8084/api/propagate/1",
   "itemsUrl": "http://localhost:8084/api/propagate/1/items" }
 ```
 
 **2. Poll** the status until it is `COMPLETED`, `COMPLETED_WITH_ERRORS` or `FAILED`:
 
 ```json
-{ "requestId": 1, "status": "COMPLETED_WITH_ERRORS", "jobExecutionId": 1,
-  "jobStatus": "COMPLETED", "jobExitCode": "COMPLETED", "totalItems": 4, "attempts": 1,
-  "succeeded": 3, "failed": 1, "pending": 0, ... }
+{ "requestId": 1, "type": "MANUAL", "status": "COMPLETED_WITH_ERRORS", "jobExecutionId": 1,
+  "jobName": "propagateUsersJob", "jobStatus": "COMPLETED", "jobExitCode": "COMPLETED",
+  "requestedCount": null, "totalItems": 4, "attempts": 1,
+  "succeeded": 3, "failed": 1, "pending": 0, "durationMs": 350, "usersPerSecond": 11, ... }
 ```
 
 **3. Inspect** the result for each user:
@@ -297,23 +301,71 @@ curl -X POST localhost:8084/api/propagate -H 'Content-Type: application/json' \
   "errorMessage": "user-service responded 404: {... \"detail\":\"User not found with id 999999\" ...}" }
 ```
 
+### Bulk propagation
+
+Give a count instead of ids. The job selects the **next N users that haven't been propagated yet**
+from user-service and creates an order and a payment for each:
+
+```bash
+curl -X POST localhost:8084/api/propagate/bulk -H 'Content-Type: application/json' -d '{"count":100000}'
+```
+```json
+{ "requestId": 12, "type": "BULK", "jobExecutionId": 15, "status": "SUBMITTED",
+  "totalItems": 0, "requestedCount": 100000,
+  "statusUrl": "http://localhost:8084/api/propagate/12", "itemsUrl": "http://localhost:8084/api/propagate/12/items" }
+```
+
+`totalItems` is 0 until the job has selected the users. Then poll the same status, items and retry
+endpoints as for a manual request:
+
+```json
+GET /api/propagate/12
+{ "requestId": 12, "type": "BULK", "status": "RUNNING", "jobName": "bulkPropagateUsersJob",
+  "requestedCount": 100000, "totalItems": 100000, "succeeded": 41070, "failed": 0, "pending": 58930,
+  "durationMs": 24000, "usersPerSecond": 1711, ... }
+```
+
+- `count` is 1 to 10,000,000.
+- **No user is propagated twice.** A saved position (the `bulk_propagation_cursor` table) holds the
+  highest user id bulk propagation has claimed, and each call continues after it. Calling
+  `{"count":1000}` repeatedly walks through all 10 million users in order. Users that already have a
+  `SUCCESS` or `PENDING` item from any request (including manual `/api/propagate` calls) are skipped.
+- **Concurrent bulk calls are safe.** Selection locks the saved position row (`SELECT … FOR UPDATE`),
+  so two requests running at the same time never claim the same users. The second one waits until
+  the first has finished selecting.
+- **Fewer users than requested:** if the end of the users table is reached, the request propagates
+  what was left (`totalItems` < `requestedCount`). Once everyone has been propagated, `totalItems` is 0.
+- **Throughput** on a 12-core machine running everything (4 services and Postgres): **about 1,700
+  users/s**, so 100k users take about 1 minute and 1 million about 10 minutes. Each user is 2 HTTP
+  calls and 2 database commits, in two other services. The limit is then this one machine's CPU and disk.
+
 ## How the batch job works
 
 ```
-POST /api/propagate
-  │  saves a PropagationRequest + one PropagationItem per identifier  (batchdb)
-  │  launches propagateUsersJob on a virtual thread, returns 202 immediately
-  ▼
-propagateUsersJob
- └─ propagateStep (chunk-oriented, chunk size 10)
-     ├─ reader     RepositoryItemReader     → the request's PropagationItems, paged by id
+POST /api/propagate                          POST /api/propagate/bulk {"count": N}
+  │ saves request + 1 item per identifier      │ saves a BULK request (no items yet)
+  ▼                                            ▼
+propagateUsersJob                            bulkPropagateUsersJob
+ │                                            ├─ selectUsersStep (tasklet, one transaction)
+ │                                            │    lock cursor → GET user-service /api/users/ids?afterId=
+ │                                            │    (keyset pages of 10k) → skip already-propagated users
+ │                                            │    → batch-INSERT N items (userId + email filled in)
+ │                                            │    → move the cursor forward
+ └─ propagateStep ◄───────────────────────────┘
+     chunk-oriented, multi-threaded: 32 chunks in parallel on virtual threads, 100 items per chunk
+     ├─ reader     JdbcPagingItemReader  → the request's items, keyset-paged by id (thread-safe)
      ├─ processor  CompositeItemProcessor
      │     1. UserLookupProcessor        GET  user-service    /api/users/{id} | /by-email
+     │                                   (skipped when userId is already known, e.g. bulk items)
      │     2. OrderCreationProcessor     POST order-service   /api/orders     (sample order)
      │     3. PaymentCreationProcessor   POST payment-service /api/payments   (amount = order total)
-     └─ writer     RepositoryItemWriter     → saves each item's ids / status / error to batchdb
+     └─ writer     JdbcBatchItemWriter   → one batched UPDATE per chunk with ids / status / error
 PropagationJobListener → sets the request to RUNNING, then COMPLETED / COMPLETED_WITH_ERRORS / FAILED
 ```
+
+Both jobs run asynchronously on a virtual thread, and `POST` returns 202 immediately. A retry always
+runs `propagateUsersJob` on the existing items. The exception is a bulk request whose selection step
+never finished: its retry runs the selection again.
 
 - **The default order and payment** come from `batch-service/src/main/resources/application.yml`:
 
@@ -333,6 +385,14 @@ PropagationJobListener → sets the request to RUNNING, then COMPLETED / COMPLET
 - **Restarts are safe.** If batch-service stops while a job is running, Spring Batch would leave that
   execution `STARTED` forever. On startup, `OrphanedJobRecovery` marks such executions and their
   requests `FAILED`, so you can call `/retry`.
+- **The parallel step is tuned for millions of rows.** The reader and writer use plain JDBC with keyset
+  paging (`WHERE id > :last ORDER BY id`) and batched `UPDATE`s. The JPA repository reader/writer would
+  use `OFFSET` paging and a select plus an update per item. Note: Spring Batch 5 limits a
+  multi-threaded step to **4 concurrent chunks** unless `throttleLimit` is set, whatever the executor
+  allows. `propagateStep` sets it to `propagation.concurrency`.
+- **Connection budget:** each running chunk holds a batch-service connection (pool 40 ≥ concurrency
+  32). Across all services the pools add up to 110 connections, so docker-compose starts Postgres with
+  `max_connections=200` (the default is 100).
 - Spring Batch metadata (`BATCH_JOB_EXECUTION`, `BATCH_STEP_EXECUTION`, …) lives in `batchdb`, next to
   the `propagation_request` / `propagation_item` tables.
 
@@ -349,7 +409,8 @@ PropagationJobListener → sets the request to RUNNING, then COMPLETED / COMPLET
 ├── order-service/     controller/ service/ repository/ entity/ dto/ exception/
 ├── payment-service/   controller/ service/ repository/ entity/ dto/ exception/
 └── batch-service/     controller/ service/ repository/ entity/ dto/ exception/
-                       batch/   (job config, processors, listener, orphan recovery)
+                       batch/   (job config, bulk selection tasklet, processors, listener,
+                                 orphan recovery)
                        client/  (RestClient wrappers for user/order/payment services)
                        config/  (typed properties, RestClient beans)
 ```
@@ -370,4 +431,7 @@ This is a demo setup. Before production you'd want to change the following:
   `totalElements`. Deep pages are slower still (page 400,000 ≈ 1.8 s), because the database has to
   skip every row before that page. Fetching by id or by email stays at about 5–10 ms. To page through
   everything, use keyset pagination (`WHERE id > :lastId`).
+- **Bulk propagation only moves forward:** the saved position never moves back. A user who failed in
+  a bulk request is picked up again only by that request's `/retry`. Users created later get higher ids,
+  so later bulk calls include them.
 - **User deletion doesn't cascade** to orders or payments, because they live in other services.

@@ -6,7 +6,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
 
-/** One call to POST /api/propagate. Each request is processed by exactly one Spring Batch job execution. */
+/** One call to POST /api/propagate or /api/propagate/bulk, processed by a Spring Batch job execution. */
 @Entity
 @Table(name = "propagation_request")
 public class PropagationRequest {
@@ -20,6 +20,13 @@ public class PropagationRequest {
     private RequestStatus status = RequestStatus.SUBMITTED;
 
     private Long jobExecutionId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10, columnDefinition = "varchar(10) default 'MANUAL'")
+    private RequestType type = RequestType.MANUAL;
+
+    /** BULK only: how many users were asked for (totalItems can be lower if fewer users were left). */
+    private Integer requestedCount;
 
     @Column(nullable = false)
     private int totalItems;
@@ -43,10 +50,19 @@ public class PropagationRequest {
         this.totalItems = totalItems;
     }
 
+    public static PropagationRequest bulk(int requestedCount) {
+        PropagationRequest r = new PropagationRequest(0); // items are selected by the job
+        r.type = RequestType.BULK;
+        r.requestedCount = requestedCount;
+        return r;
+    }
+
     public Long getId() { return id; }
     public RequestStatus getStatus() { return status; }
     public Long getJobExecutionId() { return jobExecutionId; }
     public int getTotalItems() { return totalItems; }
+    public RequestType getType() { return type; }
+    public Integer getRequestedCount() { return requestedCount; }
     public int getAttempts() { return attempts; }
 
     /** Prepares a finished request to be run again. */

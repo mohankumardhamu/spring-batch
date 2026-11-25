@@ -2,6 +2,7 @@ package com.example.batchservice.service;
 
 import com.example.batchservice.batch.PropagationJobConfig;
 import com.example.batchservice.config.PropagationProperties;
+import com.example.batchservice.dto.BulkPropagateRequest;
 import com.example.batchservice.dto.CountResponse;
 import com.example.batchservice.dto.PropagateRequest;
 import com.example.batchservice.dto.PropagationItemResponse;
@@ -26,6 +27,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -44,8 +47,10 @@ public class PropagationService {
     private final TransactionTemplate transactionTemplate;
     private final JobExplorer jobExplorer;
     private final Job propagateUsersJob;
+    private final Job bulkPropagateUsersJob;
     private final TaskExecutorJobLauncher asyncJobLauncher;
     private final int maxIdentifiers;
+    private final int maxBulkCount;
 
     public PropagationService(PropagationRequestRepository requestRepository,
                               PropagationItemRepository itemRepository,
@@ -53,13 +58,16 @@ public class PropagationService {
                               JobRepository jobRepository,
                               JobExplorer jobExplorer,
                               Job propagateUsersJob,
+                              Job bulkPropagateUsersJob,
                               PropagationProperties props) throws Exception {
         this.requestRepository = requestRepository;
         this.itemRepository = itemRepository;
         this.transactionTemplate = transactionTemplate;
         this.jobExplorer = jobExplorer;
         this.propagateUsersJob = propagateUsersJob;
+        this.bulkPropagateUsersJob = bulkPropagateUsersJob;
         this.maxIdentifiers = props.maxIdentifiersPerRequest();
+        this.maxBulkCount = props.bulk().maxCount();
 
         // Async launcher: run() returns immediately with a STARTING execution; the job runs on a virtual thread.
         SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("propagation-job-");
@@ -87,9 +95,25 @@ public class PropagationService {
         });
 
         // 2. launch the Spring Batch job asynchronously
-        Submission submission = launch(saved);
+        Submission submission = launch(propagateUsersJob, saved);
         log.info("Submitted propagation request {} with {} items as job execution {}",
                 saved.getId(), items.size(), submission.jobExecutionId());
+        return submission;
+    }
+
+    /**
+     * Propagates the next {@code count} users that have not been propagated yet. The users are selected
+     * by the job itself (selectUsersStep), so this returns immediately even for millions of users.
+     */
+    public Submission submitBulk(BulkPropagateRequest request) {
+        Integer count = request.count();
+        if (count == null || count < 1 || count > maxBulkCount) {
+            throw new IllegalArgumentException("count must be between 1 and " + maxBulkCount);
+        }
+        PropagationRequest saved = requestRepository.save(PropagationRequest.bulk(count));
+        Submission submission = launch(bulkPropagateUsersJob, saved);
+        log.info("Submitted bulk propagation request {} for {} users as job execution {}",
+                saved.getId(), count, submission.jobExecutionId());
         return submission;
     }
 
@@ -109,19 +133,22 @@ public class PropagationService {
             r.resubmit();
             return requestRepository.save(r);
         });
-        Submission submission = launch(request);
+        // A bulk request whose selection step never committed has no items yet: select again.
+        Job job = request.getType() == RequestType.BULK && request.getTotalItems() == 0
+                ? bulkPropagateUsersJob : propagateUsersJob;
+        Submission submission = launch(job, request);
         log.info("Retrying propagation request {} (attempt {}) as job execution {}",
                 requestId, request.getAttempts(), submission.jobExecutionId());
         return submission;
     }
 
-    private Submission launch(PropagationRequest request) {
+    private Submission launch(Job job, PropagationRequest request) {
         JobParameters params = new JobParametersBuilder()
                 .addLong(PropagationJobConfig.REQUEST_ID_PARAM, request.getId())
                 .addLong(PropagationJobConfig.ATTEMPT_PARAM, (long) request.getAttempts())
                 .toJobParameters();
         try {
-            JobExecution execution = asyncJobLauncher.run(propagateUsersJob, params);
+            JobExecution execution = asyncJobLauncher.run(job, params);
             return new Submission(request, execution.getId());
         } catch (Exception e) {
             requestRepository.updateStatus(request.getId(), RequestStatus.FAILED, request.getJobExecutionId());
@@ -132,17 +159,26 @@ public class PropagationService {
     public PropagationStatusResponse getStatus(Long requestId) {
         PropagationRequest r = findOrThrow(requestId);
         JobExecution job = r.getJobExecutionId() == null ? null : jobExplorer.getJobExecution(r.getJobExecutionId());
+        Map<String, Long> items = tally(ItemStatus.values(), itemRepository.countGroupByStatusForRequest(requestId));
+        Instant start = job == null || job.getStartTime() == null ? null
+                : job.getStartTime().atZone(ZoneId.systemDefault()).toInstant();
+        Instant end = job == null || job.getEndTime() == null ? null
+                : job.getEndTime().atZone(ZoneId.systemDefault()).toInstant();
+        Long durationMs = start == null ? null
+                : Math.max(1, Duration.between(start, end != null ? end : Instant.now()).toMillis());
+        long processed = items.get("SUCCESS") + items.get("FAILED");
         return new PropagationStatusResponse(
-                r.getId(), r.getStatus(), r.getJobExecutionId(),
+                r.getId(), r.getType(), r.getStatus(), r.getJobExecutionId(),
+                job == null ? null : job.getJobInstance().getJobName(),
                 job == null ? null : job.getStatus().name(),
                 job == null ? null : job.getExitStatus().getExitCode(),
-                job == null || job.getStartTime() == null ? null : job.getStartTime().atZone(ZoneId.systemDefault()).toInstant(),
-                job == null || job.getEndTime() == null ? null : job.getEndTime().atZone(ZoneId.systemDefault()).toInstant(),
+                start, end,
+                r.getRequestedCount(),
                 r.getTotalItems(),
                 r.getAttempts(),
-                itemRepository.countByRequestIdAndStatus(requestId, ItemStatus.SUCCESS),
-                itemRepository.countByRequestIdAndStatus(requestId, ItemStatus.FAILED),
-                itemRepository.countByRequestIdAndStatus(requestId, ItemStatus.PENDING),
+                items.get("SUCCESS"), items.get("FAILED"), items.get("PENDING"),
+                durationMs,
+                durationMs == null ? null : processed * 1000 / durationMs,
                 r.getCreatedAt(), r.getUpdatedAt());
     }
 

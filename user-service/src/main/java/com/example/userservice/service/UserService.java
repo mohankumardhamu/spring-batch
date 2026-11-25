@@ -1,11 +1,13 @@
 package com.example.userservice.service;
 
+import com.example.userservice.dto.UserKey;
 import com.example.userservice.dto.UserRequest;
 import com.example.userservice.dto.UserResponse;
 import com.example.userservice.entity.User;
 import com.example.userservice.exception.DuplicateResourceException;
 import com.example.userservice.exception.ResourceNotFoundException;
 import com.example.userservice.repository.UserRepository;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,10 @@ public class UserService {
         return userRepository.findByEmail(normalize(email))
                 .map(UserResponse::from)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email " + email));
+    }
+
+    public java.util.List<UserKey> getKeysAfter(long afterId, int limit) {
+        return userRepository.findByIdGreaterThanOrderByIdAsc(afterId, Limit.of(limit));
     }
 
     public long count() {

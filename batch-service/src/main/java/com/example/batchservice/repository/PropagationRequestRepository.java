@@ -21,6 +21,11 @@ public interface PropagationRequestRepository extends JpaRepository<PropagationR
 
     @Transactional
     @Modifying
+    @Query("update PropagationRequest r set r.totalItems = :totalItems, r.updatedAt = CURRENT_TIMESTAMP where r.id = :id")
+    int updateTotalItems(Long id, int totalItems);
+
+    @Transactional
+    @Modifying
     @Query("update PropagationRequest r set r.status = :to, r.updatedAt = CURRENT_TIMESTAMP where r.status in :from")
     int bulkUpdateStatus(java.util.Collection<RequestStatus> from, RequestStatus to);
 }

@@ -43,7 +43,9 @@ public class OrphanedJobRecovery implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        Set<JobExecution> orphans = jobExplorer.findRunningJobExecutions(PropagationJobConfig.JOB_NAME);
+        Set<JobExecution> orphans = new java.util.HashSet<>(
+                jobExplorer.findRunningJobExecutions(PropagationJobConfig.JOB_NAME));
+        orphans.addAll(jobExplorer.findRunningJobExecutions(PropagationJobConfig.BULK_JOB_NAME));
         LocalDateTime now = LocalDateTime.now();
         ExitStatus abandoned = ExitStatus.FAILED.addExitDescription("Interrupted by batch-service shutdown");
         for (JobExecution execution : orphans) {

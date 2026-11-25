@@ -11,7 +11,11 @@ import java.time.Instant;
  * which hop failed and why, and a re-run resumes from the hop that failed.
  */
 @Entity
-@Table(name = "propagation_item", indexes = @Index(name = "idx_item_request_id", columnList = "requestId"))
+@Table(name = "propagation_item", indexes = {
+        @Index(name = "idx_item_request_id_id", columnList = "requestId, id"),
+        @Index(name = "idx_item_request_status", columnList = "requestId, status"),
+        @Index(name = "idx_item_user_id", columnList = "userId")
+})
 public class PropagationItem {
 
     @Id
@@ -61,6 +65,28 @@ public class PropagationItem {
         this.requestId = requestId;
         this.identifierType = identifierType;
         this.identifier = identifier;
+    }
+
+    /** Rebuilds an item read with plain JDBC by the Spring Batch reader. */
+    public static PropagationItem restore(Long id, Long requestId, IdentifierType identifierType, String identifier,
+                                          ItemStatus status, Long userId, String userEmail, Long orderId,
+                                          BigDecimal orderAmount, Long paymentId, String paymentStatus,
+                                          String transactionRef, Stage failedStage, String errorMessage,
+                                          Instant processedAt) {
+        PropagationItem i = new PropagationItem(requestId, identifierType, identifier);
+        i.id = id;
+        i.status = status;
+        i.userId = userId;
+        i.userEmail = userEmail;
+        i.orderId = orderId;
+        i.orderAmount = orderAmount;
+        i.paymentId = paymentId;
+        i.paymentStatus = paymentStatus;
+        i.transactionRef = transactionRef;
+        i.failedStage = failedStage;
+        i.errorMessage = errorMessage;
+        i.processedAt = processedAt;
+        return i;
     }
 
     public void markFailed(Stage stage, String message) {
