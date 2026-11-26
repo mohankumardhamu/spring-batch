@@ -112,6 +112,26 @@ Every setting has a `localhost` default, so no configuration is needed. Environm
 | `USER_SERVICE_URL`, `ORDER_SERVICE_URL`, `PAYMENT_SERVICE_URL` | batch | `http://localhost:8081` / `8082` / `8083` |
 | `PROPAGATION_CHUNK_SIZE` | batch | 100 in docker-compose (app default 10) |
 | `PROPAGATION_CONCURRENCY` | batch | 32: chunks processed in parallel |
+| `LOGGING_STRUCTURED_FORMAT_CONSOLE` | all | `ecs` in docker-compose (JSON logs for Filebeat); unset = plain text |
+
+## Monitoring (Grafana, Kibana, Prometheus, Elasticsearch)
+
+A separate Multipass VM runs the monitoring stack. Full details are in
+[`monitoring/README.md`](monitoring/README.md).
+
+```bash
+monitoring/vm.sh create                     # create the VM and deploy the stack; prints URLs and passwords
+docker compose --profile monitoring up -d   # app + Filebeat (logs) + postgres-exporter (DB metrics)
+monitoring/vm.sh deploy                     # after changing anything in monitoring/vm/
+```
+
+- **Metrics:** every service exposes `/actuator/prometheus`, which Prometheus on the VM scrapes. That
+  covers HTTP, JVM, DB pool and Spring Batch metrics, plus business counters such as
+  `propagation_users_total`, `orders_placed_total` and `users_added_total`.
+- **Logs:** in Docker, the services log ECS JSON. Filebeat ships them to Elasticsearch, and you can
+  search them in Kibana (data view *Spring Batch logs*) or Grafana.
+- **Dashboard:** Grafana's home page is *Spring Batch microservices*. It's generated from
+  `monitoring/vm/grafana/generate_dashboards.py`.
 
 ## Postman collection
 
@@ -405,6 +425,11 @@ never finished: its retry runs the selection again.
 ├── docker-compose.yml
 ├── docker/postgres/init.sql    # creates userdb, orderdb, paymentdb, batchdb
 ├── postman/                    # Postman collection
+├── monitoring/                 # monitoring VM (see monitoring/README.md)
+│   ├── vm.sh                   #   create | deploy | status | urls | destroy
+│   ├── cloud-init.yaml         #   VM bootstrap (Docker)
+│   ├── app/filebeat.yml        #   runs next to the app (compose profile "monitoring")
+│   └── vm/                     #   deployed to the VM: compose, prometheus/, grafana/, elastic/
 ├── user-service/      controller/ service/ repository/ entity/ dto/ exception/
 ├── order-service/     controller/ service/ repository/ entity/ dto/ exception/
 ├── payment-service/   controller/ service/ repository/ entity/ dto/ exception/

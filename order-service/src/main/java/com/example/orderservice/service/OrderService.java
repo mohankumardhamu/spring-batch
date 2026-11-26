@@ -7,6 +7,8 @@ import com.example.orderservice.entity.Order;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.exception.ResourceNotFoundException;
 import com.example.orderservice.repository.OrderRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -21,16 +23,22 @@ import java.util.Map;
 public class OrderService {
 
     private final OrderRepository orderRepository;
+    private final MeterRegistry meterRegistry;
 
-    public OrderService(OrderRepository orderRepository) {
+    public OrderService(OrderRepository orderRepository, MeterRegistry meterRegistry) {
         this.orderRepository = orderRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     @Transactional
     public OrderResponse create(OrderRequest request) {
         OrderStatus status = request.status() != null ? request.status() : OrderStatus.CREATED;
         Order order = new Order(request.userId(), request.productName(), request.quantity(), request.unitPrice(), status);
-        return OrderResponse.from(orderRepository.save(order));
+        OrderResponse created = OrderResponse.from(orderRepository.save(order));
+        Counter.builder("orders.placed").description("Orders placed").tag("status", status.name())
+                .register(meterRegistry).increment();
+        meterRegistry.summary("orders.amount", "status", status.name()).record(created.totalAmount().doubleValue());
+        return created;
     }
 
     public OrderResponse getById(Long id) {

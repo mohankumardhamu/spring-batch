@@ -1,6 +1,7 @@
 package com.example.batchservice.service;
 
 import com.example.batchservice.batch.PropagationJobConfig;
+import com.example.batchservice.batch.PropagationMetrics;
 import com.example.batchservice.config.PropagationProperties;
 import com.example.batchservice.dto.BulkPropagateRequest;
 import com.example.batchservice.dto.CountResponse;
@@ -51,6 +52,7 @@ public class PropagationService {
     private final TaskExecutorJobLauncher asyncJobLauncher;
     private final int maxIdentifiers;
     private final int maxBulkCount;
+    private final PropagationMetrics metrics;
 
     public PropagationService(PropagationRequestRepository requestRepository,
                               PropagationItemRepository itemRepository,
@@ -59,7 +61,9 @@ public class PropagationService {
                               JobExplorer jobExplorer,
                               Job propagateUsersJob,
                               Job bulkPropagateUsersJob,
-                              PropagationProperties props) throws Exception {
+                              PropagationProperties props,
+                              PropagationMetrics metrics) throws Exception {
+        this.metrics = metrics;
         this.requestRepository = requestRepository;
         this.itemRepository = itemRepository;
         this.transactionTemplate = transactionTemplate;
@@ -96,6 +100,7 @@ public class PropagationService {
 
         // 2. launch the Spring Batch job asynchronously
         Submission submission = launch(propagateUsersJob, saved);
+        metrics.requestSubmitted(RequestType.MANUAL);
         log.info("Submitted propagation request {} with {} items as job execution {}",
                 saved.getId(), items.size(), submission.jobExecutionId());
         return submission;
@@ -112,6 +117,7 @@ public class PropagationService {
         }
         PropagationRequest saved = requestRepository.save(PropagationRequest.bulk(count));
         Submission submission = launch(bulkPropagateUsersJob, saved);
+        metrics.requestSubmitted(RequestType.BULK);
         log.info("Submitted bulk propagation request {} for {} users as job execution {}",
                 saved.getId(), count, submission.jobExecutionId());
         return submission;

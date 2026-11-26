@@ -13,15 +13,19 @@ public class PaymentCreationProcessor implements ItemProcessor<PropagationItem, 
 
     private final PaymentClient paymentClient;
     private final PropagationProperties.Payment payment;
+    private final PropagationMetrics metrics;
 
-    public PaymentCreationProcessor(PaymentClient paymentClient, PropagationProperties props) {
+    public PaymentCreationProcessor(PaymentClient paymentClient, PropagationProperties props,
+                                    PropagationMetrics metrics) {
         this.paymentClient = paymentClient;
         this.payment = props.payment();
+        this.metrics = metrics;
     }
 
     @Override
     public PropagationItem process(PropagationItem item) {
         if (item.isFailed()) {
+            metrics.itemProcessed(item); // failed in an earlier hop; last processor in the chain records it
             return item;
         }
         if (item.getPaymentId() == null) {
@@ -33,10 +37,12 @@ public class PaymentCreationProcessor implements ItemProcessor<PropagationItem, 
                 item.setTransactionRef(created.transactionRef());
             } catch (Exception e) {
                 item.markFailed(Stage.PAYMENT_CREATION, RemoteErrors.describe("payment-service", e));
+                metrics.itemProcessed(item);
                 return item;
             }
         }
         item.markSuccess();
+        metrics.itemProcessed(item);
         return item;
     }
 }

@@ -1,0 +1,24 @@
+#cloud-config
+# Monitoring VM: Docker + Compose; the stack itself is deployed by vm.sh deploy.
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - curl
+  - jq
+  - rsync              # vm.sh deploy syncs files in place
+groups:
+  - docker
+users:
+  - default
+  - name: ubuntu
+    groups: [docker]
+    append: true
+write_files:
+  # Elasticsearch needs more memory-mapped areas than the default 65530
+  - path: /etc/sysctl.d/99-elasticsearch.conf
+    content: |
+      vm.max_map_count=262144
+runcmd:
+  - sysctl --system
+  - systemctl enable --now docker

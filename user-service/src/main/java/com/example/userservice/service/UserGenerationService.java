@@ -2,6 +2,9 @@ package com.example.userservice.service;
 
 import com.example.userservice.dto.GenerateUsersResponse;
 import com.zaxxer.hikari.HikariDataSource;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -49,11 +52,20 @@ public class UserGenerationService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final int concurrency;
+    private final Counter usersGenerated;
+    private final Counter generationFailures;
+    private final Timer generationTimer;
 
     public UserGenerationService(JdbcTemplate jdbcTemplate, TransactionTemplate transactionTemplate,
-                                 DataSource dataSource) {
+                                 DataSource dataSource, MeterRegistry meterRegistry) {
         this.jdbcTemplate = jdbcTemplate;
         this.transactionTemplate = transactionTemplate;
+        this.usersGenerated = Counter.builder("users.added").description("Users added")
+                .tag("source", "generator").register(meterRegistry);
+        this.generationFailures = Counter.builder("users.generation.failed")
+                .description("Generated users whose chunk failed to insert").register(meterRegistry);
+        this.generationTimer = Timer.builder("users.generation")
+                .description("Duration of POST /api/users/generate runs").register(meterRegistry);
         int pool = dataSource instanceof HikariDataSource h ? h.getMaximumPoolSize() : 10;
         // leave a few connections for normal API traffic while a big generation runs
         this.concurrency = Math.max(1, pool - 4);
@@ -85,7 +97,9 @@ public class UserGenerationService {
                     try {
                         insertChunk(prefix, batchTag, from, to);
                         created.addAndGet(to - from + 1);
+                        usersGenerated.increment(to - from + 1);
                     } catch (Exception e) {
+                        generationFailures.increment(to - from + 1);
                         if (errors.size() < MAX_SAMPLE_ERRORS) {
                             errors.add("users #" + from + "-" + to + ": " + e.getMessage());
                         }
@@ -98,6 +112,7 @@ public class UserGenerationService {
             }
         } // close() waits for every virtual thread to finish
         long durationMs = Math.max(1, (System.nanoTime() - start) / 1_000_000);
+        generationTimer.record(java.time.Duration.ofMillis(durationMs));
 
         int ok = created.get();
         long rate = ok * 1000L / durationMs;

@@ -7,6 +7,8 @@ import com.example.userservice.entity.User;
 import com.example.userservice.exception.DuplicateResourceException;
 import com.example.userservice.exception.ResourceNotFoundException;
 import com.example.userservice.repository.UserRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -18,9 +20,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final Counter usersCreated;
 
-    public UserService(UserRepository userRepository) {
+    public UserService(UserRepository userRepository, MeterRegistry meterRegistry) {
         this.userRepository = userRepository;
+        this.usersCreated = Counter.builder("users.added").description("Users added")
+                .tag("source", "api").register(meterRegistry);
     }
 
     @Transactional
@@ -30,6 +35,7 @@ public class UserService {
             throw new DuplicateResourceException("User with email " + email + " already exists");
         }
         User saved = userRepository.save(new User(request.name(), email, request.phone()));
+        usersCreated.increment();
         return UserResponse.from(saved);
     }
 

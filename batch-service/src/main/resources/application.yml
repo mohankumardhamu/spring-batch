@@ -57,4 +57,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus   # /actuator/prometheus is scraped by the monitoring VM
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      # histogram buckets, so Grafana can show p50/p95/p99 latency
+      percentiles-histogram:
+        http.server.requests: true
+        http.client.requests: true

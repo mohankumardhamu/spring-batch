@@ -45,9 +45,12 @@ public class BulkUserSelectionTasklet implements Tasklet {
     private final JdbcTemplate jdbcTemplate;
     private final PropagationRequestRepository requestRepository;
     private final int pageSize;
+    private final PropagationMetrics metrics;
 
     public BulkUserSelectionTasklet(UserClient userClient, JdbcTemplate jdbcTemplate,
-                                    PropagationRequestRepository requestRepository, PropagationProperties props) {
+                                    PropagationRequestRepository requestRepository, PropagationProperties props,
+                                    PropagationMetrics metrics) {
+        this.metrics = metrics;
         this.userClient = userClient;
         this.jdbcTemplate = jdbcTemplate;
         this.requestRepository = requestRepository;
@@ -95,6 +98,7 @@ public class BulkUserSelectionTasklet implements Tasklet {
         jdbcTemplate.update("UPDATE bulk_propagation_cursor SET last_user_id = ? WHERE id = ?", cursor,
                 BulkCursor.SINGLETON_ID);
         requestRepository.updateTotalItems(requestId, selected);
+        metrics.bulkSelected(selected);
         log.info("Bulk request {}: selected {} of {} requested users (ids {}..{}, skipped {} already propagated)",
                 requestId, selected, wanted, startCursor + 1, cursor, skipped);
         return RepeatStatus.FINISHED;

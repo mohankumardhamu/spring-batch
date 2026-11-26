@@ -1,0 +1,40 @@
+# Prometheus on the monitoring VM. __APP_HOST__ is replaced by vm.sh deploy with the address of the
+# machine running the application, as seen from the VM (the multipass bridge gateway).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: dev
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # --- spring-batch microservices (Spring Boot Actuator + Micrometer) ---------------------------
+  - job_name: spring-batch
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["__APP_HOST__:8081"]
+        labels: { service: user-service }
+      - targets: ["__APP_HOST__:8082"]
+        labels: { service: order-service }
+      - targets: ["__APP_HOST__:8083"]
+        labels: { service: payment-service }
+      - targets: ["__APP_HOST__:8084"]
+        labels: { service: batch-service }
+
+  # --- PostgreSQL (postgres-exporter next to the app, compose profile "monitoring") ------------
+  - job_name: postgres
+    static_configs:
+      - targets: ["__APP_HOST__:9187"]
+        labels: { service: postgres }
+
+  # --- the monitoring stack itself -------------------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]

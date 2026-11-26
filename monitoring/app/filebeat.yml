@@ -1,0 +1,92 @@
+# Filebeat runs next to the application (docker compose --profile monitoring) and ships this
+# project's container logs to Elasticsearch on the monitoring VM, into the data stream
+# logs-spring-batch-default.
+#
+# The four Spring Boot services log one ECS JSON object per line (LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs),
+# which is stored as-is. Other containers (postgres, postgres-exporter) log plain text, so continuation
+# lines are joined and the Compose service becomes service.name.
+
+# Autodiscover conditions see Docker labels as nested objects. Compose sets com.docker.compose.project
+# AND com.docker.compose.project.working_dir/config_files, so the project name itself ends up under
+# "com.docker.compose.project.value".
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      templates:
+        - condition:
+            and:
+              - equals.docker.container.labels.com.docker.compose.project.value: spring-batch-microservices
+              - or:
+                  - equals.docker.container.labels.com.docker.compose.service: user-service
+                  - equals.docker.container.labels.com.docker.compose.service: order-service
+                  - equals.docker.container.labels.com.docker.compose.service: payment-service
+                  - equals.docker.container.labels.com.docker.compose.service: batch-service
+          config:
+            - type: filestream
+              id: container-${data.docker.container.id}
+              paths:
+                - /var/lib/docker/containers/${data.docker.container.id}/*.log
+              prospector.scanner.symlinks: true
+              parsers:
+                - container: {}
+                - ndjson:
+                    target: ""
+                    overwrite_keys: true
+                    expand_keys: true
+                    # The Spring banner and JVM warnings before logging starts are plain text
+                    ignore_decoding_error: true
+              processors:
+                - add_fields:
+                    when.not.has_fields: ["service.name"]
+                    target: ""
+                    fields:
+                      service.name: "${data.docker.container.labels.com.docker.compose.service}"
+
+        - condition:
+            and:
+              - equals.docker.container.labels.com.docker.compose.project.value: spring-batch-microservices
+              - not.or:
+                  - equals.docker.container.labels.com.docker.compose.service: user-service
+                  - equals.docker.container.labels.com.docker.compose.service: order-service
+                  - equals.docker.container.labels.com.docker.compose.service: payment-service
+                  - equals.docker.container.labels.com.docker.compose.service: batch-service
+                  # not its own logs: every line it ships would make it log again
+                  - equals.docker.container.labels.com.docker.compose.service: filebeat
+          config:
+            - type: filestream
+              id: container-${data.docker.container.id}
+              paths:
+                - /var/lib/docker/containers/${data.docker.container.id}/*.log
+              prospector.scanner.symlinks: true
+              parsers:
+                - container: {}
+                - multiline:
+                    type: pattern
+                    # indented lines, "Caused by:", "... 12 more" belong to the line before
+                    pattern: '^([ \t]+\S|Caused by:|\.\.\. \d+ (more|common))'
+                    negate: false
+                    match: after
+              processors:
+                - add_fields:
+                    target: ""
+                    fields:
+                      service.name: "${data.docker.container.labels.com.docker.compose.service}"
+
+processors:
+  - drop_fields:
+      fields: ["agent.ephemeral_id", "agent.id", "log.file", "input.type", "stream", "ecs.version"]
+      ignore_missing: true
+
+output.elasticsearch:
+  hosts: ["${ELASTICSEARCH_URL:http://localhost:9200}"]
+  username: spring-batch-filebeat
+  password: "${ES_FILEBEAT_PASSWORD:}"
+  index: logs-spring-batch-default
+
+# The data stream uses Elasticsearch's built-in "logs" index template (logs-*-*); the retention policy
+# is set by monitoring/vm/elastic/setup.sh. Filebeat therefore doesn't install its own template.
+setup.template.enabled: false
+setup.ilm.enabled: false
+
+logging.level: warning
+logging.metrics.enabled: false

@@ -1,0 +1,33 @@
+# Provisioned at Grafana start; edits in the UI are not kept.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      manageAlerts: true          # show the Prometheus alert rules under Alerting
+      prometheusType: Prometheus
+
+  # Application logs shipped by Filebeat. Read-only user created by elastic/setup.sh.
+  - name: Elasticsearch logs
+    uid: elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    basicAuth: true
+    basicAuthUser: spring-batch-grafana
+    editable: false
+    jsonData:
+      index: logs-spring-batch-*
+      timeField: "@timestamp"
+      logMessageField: message
+      logLevelField: log.level
+      maxConcurrentShardRequests: 5
+    secureJsonData:
+      basicAuthPassword: $ES_GRAFANA_PASSWORD

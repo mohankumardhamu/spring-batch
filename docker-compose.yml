@@ -1,5 +1,10 @@
 name: spring-batch-microservices
 
+# One JSON object per log line (Elastic Common Schema), so Filebeat can ship them to Elasticsearch
+# without parsing. Run the jars locally (without this) to get plain-text logs.
+x-app-logging: &app-logging
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+
 x-db-credentials: &db-credentials
   DB_USERNAME: ${POSTGRES_USER:-postgres}
   DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -32,7 +37,7 @@ services:
     image: user-service:1.0.0
     container_name: user-service
     environment:
-      <<: *db-credentials
+      <<: [*db-credentials, *app-logging]
       DB_URL: jdbc:postgresql://postgres:5432/userdb
       DB_POOL_SIZE: 30
     ports:
@@ -49,7 +54,7 @@ services:
     image: order-service:1.0.0
     container_name: order-service
     environment:
-      <<: *db-credentials
+      <<: [*db-credentials, *app-logging]
       DB_URL: jdbc:postgresql://postgres:5432/orderdb
       DB_POOL_SIZE: 20
     ports:
@@ -66,7 +71,7 @@ services:
     image: payment-service:1.0.0
     container_name: payment-service
     environment:
-      <<: *db-credentials
+      <<: [*db-credentials, *app-logging]
       DB_URL: jdbc:postgresql://postgres:5432/paymentdb
       DB_POOL_SIZE: 20
     ports:
@@ -83,7 +88,7 @@ services:
     image: batch-service:1.0.0
     container_name: batch-service
     environment:
-      <<: *db-credentials
+      <<: [*db-credentials, *app-logging]
       DB_URL: jdbc:postgresql://postgres:5432/batchdb
       DB_POOL_SIZE: 40
       USER_SERVICE_URL: http://user-service:8081
@@ -103,5 +108,43 @@ services:
       payment-service:
         condition: service_started
 
+  # ---------------------------------------------------------------------------------------------
+  # Monitoring agents (profile "monitoring"): they feed the monitoring VM (see monitoring/README.md).
+  #   docker compose --profile monitoring up -d
+  # Without the profile the app runs exactly as before, with no monitoring VM needed.
+  # ---------------------------------------------------------------------------------------------
+  filebeat:
+    profiles: ["monitoring"]
+    image: docker.elastic.co/beats/filebeat:9.5.5
+    container_name: filebeat
+    user: root                      # reads other containers' log files and the Docker socket
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    env_file:
+      # ELASTICSEARCH_URL and ES_FILEBEAT_PASSWORD, written by monitoring/vm.sh deploy
+      - path: monitoring/.generated/app.env
+        required: false
+    volumes:
+      - ./monitoring/app/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - filebeat-data:/usr/share/filebeat/data   # read positions survive restarts
+    restart: unless-stopped
+
+  postgres-exporter:
+    profiles: ["monitoring"]
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    container_name: postgres-exporter
+    environment:
+      DATA_SOURCE_URI: postgres:5432/postgres?sslmode=disable
+      DATA_SOURCE_USER: ${POSTGRES_USER:-postgres}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "9187:9187"                 # scraped by Prometheus on the monitoring VM
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  filebeat-data:

@@ -7,6 +7,8 @@ import com.example.paymentservice.entity.Payment;
 import com.example.paymentservice.entity.PaymentStatus;
 import com.example.paymentservice.exception.ResourceNotFoundException;
 import com.example.paymentservice.repository.PaymentRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -23,9 +25,11 @@ import java.util.UUID;
 public class PaymentService {
 
     private final PaymentRepository paymentRepository;
+    private final MeterRegistry meterRegistry;
 
-    public PaymentService(PaymentRepository paymentRepository) {
+    public PaymentService(PaymentRepository paymentRepository, MeterRegistry meterRegistry) {
         this.paymentRepository = paymentRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     @Transactional
@@ -33,7 +37,13 @@ public class PaymentService {
         PaymentStatus status = request.status() != null ? request.status() : PaymentStatus.PENDING;
         Payment payment = new Payment(request.orderId(), request.userId(), request.amount(), request.method(),
                 status, newTransactionRef());
-        return PaymentResponse.from(paymentRepository.save(payment));
+        PaymentResponse created = PaymentResponse.from(paymentRepository.save(payment));
+        Counter.builder("payments.processed").description("Payments processed")
+                .tag("method", request.method().name()).tag("status", status.name())
+                .register(meterRegistry).increment();
+        meterRegistry.summary("payments.amount", "method", request.method().name())
+                .record(request.amount().doubleValue());
+        return created;
     }
 
     public PaymentResponse getById(Long id) {
